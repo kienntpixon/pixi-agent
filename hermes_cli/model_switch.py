@@ -1479,7 +1479,9 @@ def list_authenticated_providers(
     # same endpoint as a built-in (e.g. a user-defined "my-dashscope" on
     # https://coding-intl.dashscope.aliyuncs.com/v1 collides with the built-in
     # alibaba-coding-plan row when DASHSCOPE_API_KEY is present). Fixes #16970.
-    _builtin_endpoints: set = set()
+    # Maps normalized base URL -> canonical slug so the section-4 dedup can
+    # re-tag the surviving built-in row as user-defined (see there).
+    _builtin_endpoints: dict = {}
 
     def _norm_url(url: str) -> str:
         return str(url or "").strip().rstrip("/").lower()
@@ -1504,7 +1506,7 @@ def list_authenticated_providers(
             url = getattr(pcfg, "inference_base_url", "") or ""
         normed = _norm_url(url)
         if normed:
-            _builtin_endpoints.add(normed)
+            _builtin_endpoints[normed] = slug
 
     def _has_fast_aws_sdk_signal() -> bool:
         """Return True when explicit AWS auth config is present.
@@ -2203,8 +2205,34 @@ def list_authenticated_providers(
             # built-in alibaba-coding-plan row whenever DASHSCOPE_API_KEY is
             # set. The built-in row carries the curated model list, correct
             # auth wiring, and canonical slug — keep it and hide the shadow.
+            #
+            # Do NOT drop the user-configured signal with the shadow, though:
+            # org-filtered pickers (Pixi desktop) surface only
+            # ``is_user_defined`` rows, so silently swallowing a
+            # custom_providers entry into an is_user_defined=False built-in
+            # row hides the user's configured (often DEFAULT) provider from
+            # the picker entirely. Mark the canonical row user-defined — the
+            # TUI's canonical-merge keys on slug membership, not this flag
+            # (see inventory.py), so built-in handling is unaffected — and
+            # carry is_current over when the swallowed entry is the active
+            # provider (config slugs keep their display case, e.g.
+            # ``custom:PixonBackup`` vs the normalized ``custom:pixonbackup``,
+            # so compare case-insensitively).
             _grp_url_norm = _pair_key[1]
             if _grp_url_norm and _grp_url_norm in _builtin_endpoints:
+                _builtin_slug = _builtin_endpoints[_grp_url_norm]
+                # config may reference the active custom provider by bare
+                # name ("my-alibaba") or full slug ("custom:My-Alibaba").
+                _cur = str(current_provider or "").strip()
+                _cur_slugs = (
+                    {_cur.lower(), custom_provider_slug(_cur).lower()} if _cur else set()
+                )
+                for _row in results:
+                    if _row.get("slug") == _builtin_slug:
+                        _row["is_user_defined"] = True
+                        if slug.lower() in _cur_slugs:
+                            _row["is_current"] = True
+                        break
                 continue
             # Live model discovery from custom provider endpoints (matches
             # Section 3 behavior for user ``providers:`` entries).

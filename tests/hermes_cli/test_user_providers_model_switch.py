@@ -565,6 +565,68 @@ def test_list_authenticated_providers_hides_custom_shadowing_builtin_endpoint(mo
     )
 
 
+def test_list_authenticated_providers_builtin_dedup_keeps_user_defined_signal(monkeypatch):
+    """The #16970 dedup must not erase the user-configured signal.
+
+    Org-filtered pickers (Pixi desktop) surface only ``is_user_defined`` rows.
+    When a custom_providers entry is swallowed into the built-in row for the
+    same endpoint, the surviving row must be re-tagged
+    ``is_user_defined: True`` — and marked ``is_current`` when the swallowed
+    entry is the active provider — or the user's configured (often DEFAULT)
+    provider disappears from those pickers entirely.
+    """
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
+    monkeypatch.setattr(
+        "agent.models_dev.fetch_models_dev",
+        lambda: {
+            "alibaba": {
+                "name": "Alibaba Cloud (DashScope)",
+                "env": ["DASHSCOPE_API_KEY"],
+            }
+        },
+    )
+    monkeypatch.setattr("hermes_cli.providers.HERMES_OVERLAYS", {})
+
+    custom_providers = [
+        {
+            "name": "MyAlibaba",
+            "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+            "api_key": "sk-sp-test",
+            "model": "qwen3.6-plus",
+        }
+    ]
+
+    # config.yaml keeps the display case in model.provider (custom:MyAlibaba);
+    # the swallowed group's slug is normalized (custom:myalibaba).
+    providers = list_authenticated_providers(
+        current_provider="custom:MyAlibaba",
+        user_providers={},
+        custom_providers=custom_providers,
+        max_models=50,
+    )
+
+    row = next(p for p in providers if p["slug"] == "alibaba")
+    assert row["is_user_defined"] is True, (
+        "built-in row surviving the #16970 dedup must carry the swallowed "
+        "entry's user-defined signal"
+    )
+    assert row["is_current"] is True, (
+        "built-in row must be current when the swallowed custom entry is the "
+        "active provider"
+    )
+
+    # A different active provider must NOT mark the surviving row current.
+    providers = list_authenticated_providers(
+        current_provider="openrouter",
+        user_providers={},
+        custom_providers=custom_providers,
+        max_models=50,
+    )
+    row = next(p for p in providers if p["slug"] == "alibaba")
+    assert row["is_user_defined"] is True
+    assert row["is_current"] is False
+
+
 def test_list_authenticated_providers_keeps_custom_with_distinct_endpoint(monkeypatch):
     """Dedup must only apply when the endpoint matches a built-in. A custom
     provider on a genuinely distinct endpoint stays visible even if a
