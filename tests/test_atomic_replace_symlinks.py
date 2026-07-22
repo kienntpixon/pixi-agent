@@ -232,15 +232,95 @@ def test_atomic_replace_other_oserror_propagates(
     tmp = _write_tmp(tmp_path, "new\n")
 
     def fail_replace(src: str, dst: str) -> None:
-        raise OSError(errno.EACCES, os.strerror(errno.EACCES), src, None, dst)
+        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC), src, None, dst)
 
     monkeypatch.setattr("utils.os.replace", fail_replace)
 
     with pytest.raises(OSError) as excinfo:
         atomic_replace(tmp, target)
-    assert excinfo.value.errno == errno.EACCES
+    assert excinfo.value.errno == errno.ENOSPC
     assert target.read_text(encoding="utf-8") == "old\n"
     assert tmp.exists()
+
+
+# ─── EACCES / EPERM retry (Windows sharing violations) ─────────────────────
+# On Windows, os.replace raises EACCES ("[WinError 5] Access is denied") when
+# the destination is held open by another process without FILE_SHARE_DELETE
+# (antivirus, indexer, concurrent config.yaml reader). Those locks are
+# transient — atomic_replace retries the rename briefly, then falls back to
+# copy-in-place. Before this, every /model or provider switch on Windows
+# could fail with "Failed to save config" and silently drop the change.
+
+
+def test_atomic_replace_eacces_transient_lock_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "config.yaml"
+    target.write_text("old\n", encoding="utf-8")
+    tmp = _write_tmp(tmp_path, "new\n")
+
+    real_replace = os.replace
+    calls = {"n": 0}
+
+    def flaky_replace(src: str, dst: str) -> None:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise OSError(errno.EACCES, os.strerror(errno.EACCES), src, None, dst)
+        real_replace(src, dst)
+
+    monkeypatch.setattr("utils.os.replace", flaky_replace)
+    monkeypatch.setattr("utils.time.sleep", lambda _s: None)
+
+    assert Path(atomic_replace(tmp, target)) == target
+    assert target.read_text(encoding="utf-8") == "new\n"
+    assert not tmp.exists()
+    assert calls["n"] == 3, "should have succeeded on the first retry after two failures"
+
+
+@pytest.mark.parametrize("fail_errno", [errno.EACCES, errno.EPERM])
+def test_atomic_replace_eacces_persistent_lock_copy_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_errno: int
+) -> None:
+    """A destination that never unlocks still gets the new content via the
+    copy fallback (works when the holder allows write sharing but not delete).
+    """
+    target = tmp_path / "config.yaml"
+    target.write_text("old\n", encoding="utf-8")
+    tmp = _write_tmp(tmp_path, "new\n")
+
+    def fail_replace(src: str, dst: str) -> None:
+        raise OSError(fail_errno, os.strerror(fail_errno), src, None, dst)
+
+    monkeypatch.setattr("utils.os.replace", fail_replace)
+    monkeypatch.setattr("utils.time.sleep", lambda _s: None)
+
+    assert Path(atomic_replace(tmp, target)) == target
+    assert target.read_text(encoding="utf-8") == "new\n"
+    assert not tmp.exists()
+
+
+def test_atomic_replace_eacces_retry_non_retryable_error_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unrelated error surfacing mid-retry must not be swallowed."""
+    target = tmp_path / "config.yaml"
+    target.write_text("old\n", encoding="utf-8")
+    tmp = _write_tmp(tmp_path, "new\n")
+
+    calls = {"n": 0}
+
+    def fail_replace(src: str, dst: str) -> None:
+        calls["n"] += 1
+        code = errno.EACCES if calls["n"] == 1 else errno.ENOSPC
+        raise OSError(code, os.strerror(code), src, None, dst)
+
+    monkeypatch.setattr("utils.os.replace", fail_replace)
+    monkeypatch.setattr("utils.time.sleep", lambda _s: None)
+
+    with pytest.raises(OSError) as excinfo:
+        atomic_replace(tmp, target)
+    assert excinfo.value.errno == errno.ENOSPC
+    assert target.read_text(encoding="utf-8") == "old\n"
 
 
 def test_atomic_replace_real_cross_device(tmp_path: Path) -> None:

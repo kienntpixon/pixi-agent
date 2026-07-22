@@ -7,6 +7,7 @@ import os
 import shutil
 import stat
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Union
 from urllib.parse import urlparse
@@ -77,6 +78,15 @@ def atomic_replace(tmp_path: Union[str, Path], target: Union[str, Path]) -> str:
     those cases fall back to copy/fsync/unlink for cross-device, bind-mount,
     and busy-file deployments.
 
+    On Windows, ``os.replace`` raises ``EACCES``/``EPERM`` (WinError 5,
+    "Access is denied") when the destination is held open by another
+    process without ``FILE_SHARE_DELETE`` — antivirus scanners, search
+    indexers, or a concurrent reader polling ``config.yaml``.  Those locks
+    are almost always transient, so the rename is retried briefly before
+    taking the same copy/fsync/unlink fallback.  Prior to this the error
+    propagated as "Failed to save config: [WinError 5] Access is denied",
+    silently dropping model/provider switches on Windows (#config-save).
+
     Returns the resolved real path used for the replace, so callers that
     need to re-apply permissions can target it instead of the symlink.
     """
@@ -86,7 +96,18 @@ def atomic_replace(tmp_path: Union[str, Path], target: Union[str, Path]) -> str:
     try:
         os.replace(tmp_str, real_path)
     except OSError as exc:
-        if exc.errno not in (errno.EXDEV, errno.EBUSY):
+        if exc.errno in (errno.EACCES, errno.EPERM):
+            # Transient Windows sharing violation — retry the atomic rename
+            # a few times before giving up on rename semantics entirely.
+            for _ in range(5):
+                time.sleep(0.1)
+                try:
+                    os.replace(tmp_str, real_path)
+                    return real_path
+                except OSError as retry_exc:
+                    if retry_exc.errno not in (errno.EACCES, errno.EPERM):
+                        raise
+        elif exc.errno not in (errno.EXDEV, errno.EBUSY):
             raise
         logger.debug(
             "atomic_replace: %s -> %s failed with %s; falling back to copy",
