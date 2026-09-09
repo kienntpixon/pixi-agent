@@ -37,18 +37,16 @@ do with later.
 
 ## Prerequisites
 
-The artifact tools arrive over the **Pixi MCP connector**. Check with
-`list_artifacts` — if that tool does not exist in this session, the connector is
-not attached and nothing in this skill will work.
-
-To attach it, the person using Pixi adds `https://pixi.pixon.cc/mcp` as an MCP
-server and signs in through PixON ID. Say that plainly rather than guessing at
-another route: there is no local file fallback, because the page has to live on
-the server for sharing and revocation to mean anything.
+The artifact tools arrive over the **Pixi MCP connector**, which Pixi attaches
+to every signed-in machine by itself — there is nothing to install. Check with
+`list_artifacts`; if that tool is missing, the person is not signed in to Pixi
+on this machine, and saying so is the whole answer. There is no local-file
+fallback, because a page has to live on the server for sharing and revocation
+to mean anything.
 
 Tools this skill uses: `create_artifact`, `update_artifact`, `read_artifact`,
-`list_artifacts`, `get_artifact`, `grant_artifact_access`,
-`revoke_artifact_access`, `set_artifact_visibility`.
+`list_artifacts`, `get_artifact`, `list_artifact_targets`,
+`grant_artifact_access`, `revoke_artifact_access`, `set_artifact_visibility`.
 
 ## How to Run
 
@@ -88,9 +86,13 @@ open it.
 | Stop sharing | `revoke_artifact_access(id, kind, subject_id)` |
 | Find pages | `list_artifacts()` |
 
-Subject UUIDs come from `list_users`, `list_departments` and `list_positions`
-on the same connector. Never invent one — a wrong UUID silently shares with
-nobody.
+Subject UUIDs come from `list_artifact_targets`, which returns people,
+departments and positions as id + label. Never invent one — a wrong UUID
+silently shares with nobody, and the person who asked believes it arrived.
+
+That tool is the only directory this skill gets, on purpose: turning "send it to
+Minh" into a UUID does not need the ability to read personnel records, so the
+agent's credential does not carry it.
 
 ## Procedure
 
