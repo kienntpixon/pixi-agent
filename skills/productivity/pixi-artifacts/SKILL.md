@@ -1,7 +1,7 @@
 ---
 name: pixi-artifacts
 description: "Publish an HTML page to Pixi and share it with colleagues."
-version: 1.0.0
+version: 1.1.0
 author: kiennt (@kienntpixon)
 license: MIT
 platforms: [linux, macos, windows]
@@ -44,24 +44,63 @@ on this machine, and saying so is the whole answer. There is no local-file
 fallback, because a page has to live on the server for sharing and revocation
 to mean anything.
 
-Tools this skill uses: `create_artifact`, `update_artifact`, `read_artifact`,
-`list_artifacts`, `get_artifact`, `list_artifact_targets`,
-`grant_artifact_access`, `revoke_artifact_access`, `set_artifact_visibility`.
+Tools this skill uses: `create_artifact`, `get_artifact_upload_url`,
+`update_artifact`, `read_artifact`, `list_artifacts`, `get_artifact`,
+`list_artifact_targets`, `grant_artifact_access`, `revoke_artifact_access`,
+`set_artifact_visibility`.
 
 ## How to Run
 
-Write the complete HTML, then publish it in one call:
+**Write the page to disk, then upload the file. Do not retype it into a tool
+argument.**
+
+`create_artifact(content=…)` carries the whole document through your own
+output — every byte of it, base64 images included. A report with four charts
+costs megabytes of conversation to say something already sitting in a file, and
+the 16 MiB ceiling arrives long before your output limit is comfortable.
+
+So write the folder, zip it, and hand it to curl:
+
+```bash
+mkdir -p report/img
+# ...write report/index.html and report/img/*.png the way you would any file...
+zip -qr report.zip report
+#   No `zip` binary (common on Windows)? The stdlib has one:
+#   python -c "import shutil;shutil.make_archive('report','zip','.','report')"
+```
 
 ```
-create_artifact(
-  title="Q3 puzzle market — top movers",
-  description="Downloads and revenue for the eight titles that moved most",
-  content="<!doctype html>…"
-)
+create_artifact(title="Q3 puzzle market — top movers",
+                description="Downloads and revenue for the eight titles that moved most")
+get_artifact_upload_url(id=<id>)     # -> { upload_url, expires_in, max_bytes }
 ```
 
-It returns the artifact's `id`. The page starts **private**: nobody else can
-open it until it is shared. Then share it with whoever asked:
+```bash
+curl -sS -X PUT "<upload_url>" \
+  -H 'Content-Type: application/zip' --data-binary @report.zip
+# -> {"version":1,"created":true}
+```
+
+The zip must hold **`index.html` at its top level**, plus whatever that page
+references. A single wrapping folder is fine and is stripped — `zip -r
+report.zip report/` works. Inside the page, reference assets the ordinary
+relative way: `<img src="img/chart.png">`, `<link rel=stylesheet
+href="style.css">`. Pixi serves them from the same directory as the page, so
+what renders locally renders there.
+
+One HTML file and nothing else? Skip the zip:
+
+```bash
+curl -sS -X PUT "<upload_url>" -H 'Content-Type: text/html' --data-binary @page.html
+```
+
+**No shell available?** Then `create_artifact(title, description,
+content="<!doctype html>…")` still works, with everything embedded as `data:`
+URIs. It is the fallback, not the default — reach for it only when you genuinely
+cannot run a command.
+
+The page starts **private**: nobody else can open it until it is shared. Then
+share it with whoever asked:
 
 ```
 grant_artifact_access(id=<id>, subject_kind="user", subject_id=<uuid>)
@@ -74,8 +113,11 @@ open it.
 
 | Goal | Call |
 |---|---|
-| New page | `create_artifact(title, description, content)` |
-| Replace the page's HTML | `update_artifact(id, content=…)` |
+| New page | `create_artifact(title, description)` then upload |
+| Get somewhere to upload to | `get_artifact_upload_url(id)` |
+| Send the file (page + assets) | `curl -X PUT "<upload_url>" -H 'Content-Type: application/zip' --data-binary @report.zip` |
+| Send one HTML file | `curl -X PUT "<upload_url>" -H 'Content-Type: text/html' --data-binary @page.html` |
+| Replace the page's HTML (no shell) | `update_artifact(id, content=…)` |
 | Rename it | `update_artifact(id, title=…, description=…)` |
 | Read what is on it now | `read_artifact(id)` |
 | Share with a person | `grant_artifact_access(id, "user", <user uuid>)` |
@@ -98,19 +140,24 @@ agent's credential does not carry it.
 
 **1. Decide it is a page.** See *When to Use*. If it is not, answer normally.
 
-**2. Write ONE self-contained HTML file.** This is the constraint everything
-else follows from — the page runs sandboxed with `connect-src 'none'`, so
-anything it tries to fetch from another host simply does not load, and it does
-not load for the *reader* rather than for you:
+**2. Write the page, and keep its files beside it.** The page runs sandboxed
+with `connect-src 'none'`, so anything it fetches from another host simply does
+not load — and it fails for the *reader*, not for you, which is why this is the
+constraint everything else follows from:
 
-- Images, fonts and data: embed as `data:` URIs. No remote `<img src="https://…">`.
-- Scripts: only `https://cdnjs.cloudflare.com` and `https://cdn.jsdelivr.net`,
-  pinned to an exact version. Everything else is blocked.
-- Styles: inline, or Google Fonts stylesheets.
+- **Its own files: ordinary relative paths.** `img/chart.png`, `style.css`,
+  `fonts/inter.woff2`. Ship them in the zip and they load. This is the normal
+  way to build a page; `data:` URIs are only needed when you cannot use a shell.
+- **Another host: no.** A remote `<img src="https://example.com/logo.png">` is
+  blocked. Download it into the folder instead.
+- Scripts: your own `.js` files, or `https://cdnjs.cloudflare.com` and
+  `https://cdn.jsdelivr.net` pinned to an exact version. Nothing else.
+- Styles: your own `.css`, inline, or Google Fonts stylesheets.
 - No `fetch`, no forms that post anywhere, no analytics beacons — all blocked.
 - Give it a `<title>`, make it readable on a phone, and set explicit background
   and text colours rather than relying on the reader's theme.
-- 16 MiB is the ceiling, `data:` URIs included.
+- 16 MiB total, up to 200 files. Extensions Pixi will not serve (`.exe`, and
+  anything else not on its list) are refused at upload with a message saying so.
 
 **3. Publish, then share.** Create it, then grant access. Two steps on purpose:
 a page exists privately for a moment before anybody else can see it, which is
@@ -120,14 +167,23 @@ the moment to notice it is wrong.
 department" is the part people need; a bare URL invites them to forward it to
 somebody who will get a 404.
 
-**5. Updating.** `update_artifact(id, content=…)` publishes a new version and
-keeps the old ones. Re-publishing byte-identical content creates no new version,
-so a nightly job that regenerates the same page does not fill the history.
+**5. Updating.** Ask for a fresh `get_artifact_upload_url(id)` and PUT again —
+that publishes a new version and keeps the old ones. Re-publishing an identical
+file set creates no new version, so a nightly job that regenerates the same page
+does not fill the history. An upload URL is good for fifteen minutes and for
+that one artifact; get a new one rather than storing it.
 
 ## Pitfalls
 
 - **Remote images.** The single most common way an artifact looks broken to its
-  reader and fine to whoever made it. Embed, or leave it out.
+  reader and fine to whoever made it. Put the file in the zip, or leave it out.
+- **Pushing the file through the conversation.** `create_artifact(content=…)`
+  works and is sometimes the only option, but every byte is emitted by you. If
+  you can run a command, upload instead.
+- **A zip of the wrong shape.** `index.html` must be at the top (one wrapping
+  folder is stripped for you). No `..` in any path, no absolute paths, no
+  symlinks — all refused, because on this server such a path would write over
+  another artifact rather than merely misbehave.
 - **Sharing with a department shares with everything under it.** Granting
   "Engineering" reaches every team beneath it. Say which department out loud
   before doing it.
@@ -148,7 +204,9 @@ After publishing, confirm the page is really there and really reachable:
 1. `get_artifact(id)` — check `version` is not 0. A 0 means the metadata was
    created and the HTML never landed.
 2. `read_artifact(id)` — check the HTML that came back is the HTML you sent,
-   not a truncated copy.
+   not a truncated copy. (For a bundle this returns `index.html`; the assets are
+   verified by the upload having succeeded, since a zip that lost a file would
+   have changed the version's hash.)
 3. Check the returned permissions say what you intended: `visibility`, and the
    grants you added.
 
@@ -156,3 +214,6 @@ If the reader reports a blank page, the cause is almost always step 2 of the
 *Procedure*: something in the HTML is fetched from a host the sandbox blocks.
 Read it back and look for an absolute `https://` URL that is not one of the two
 allowed script CDNs.
+
+If images are missing but the text is there, the file is probably not in the
+zip — `unzip -l report.zip` and compare against what the page references.
