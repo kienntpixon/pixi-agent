@@ -1,7 +1,7 @@
 ---
 name: pixi-bug-report
 description: "Report a Pixi bug to the Pixi Bugbase sheet, with screenshots and logs, and check a reported bug's status."
-version: 1.0.0
+version: 1.0.1
 author: kiennt (@kienntpixon)
 license: MIT
 platforms: [linux, macos, windows]
@@ -149,6 +149,11 @@ Keep it short, in the user's language. Include:
 - that they can ask "bug BUG-00xx sao rồi" any time
 
 Don't paste the JSON.
+
+**If `attachment_errors` is not empty:** the bug was still logged, just without those files,
+and the row carries a note saying so. Tell the user which files didn't make it. Ask them to
+drop those files into the attachments folder, named with the bug ID (e.g. `BUG-0012_screen.png`),
+or to send them again so you can retry.
 
 **If `ok` is false:**
 

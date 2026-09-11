@@ -232,14 +232,22 @@ def cmd_submit(a):
     try:
         who = me(drive)
         row = claim_row(sheets, a.title)
-        bug_id = f"BUG-{row - 2:04d}"
-        if a.attach_logs:
-            lp = collect_logs()
-            if lp:
-                attach.append(lp)
-        links = []
-        for i, p in enumerate(attach, 1):
+    except HttpError as e:
+        http_error(e)
+    bug_id = f"BUG-{row - 2:04d}"
+    if a.attach_logs:
+        lp = collect_logs()
+        if lp:
+            attach.append(lp)
+    # The row is claimed now: a failed upload must not leave it holding only a title,
+    # so record the failure and still write the report.
+    links, upload_errors = [], []
+    for i, p in enumerate(attach, 1):
+        try:
             links.append((p.name, upload(drive, p, f"{bug_id}_{i}_{p.name}")))
+        except Exception as e:
+            upload_errors.append({"file": str(p), "error": str(e)[:300]})
+    try:
         version = " · ".join(x for x in (a.version, engine_version()) if x) or "?"
         t = now_vn()
         reqs = [cell(row, "status", "New"), cell(row, "severity", severity), cell(row, "module", a.module),
@@ -259,12 +267,21 @@ def cmd_submit(a):
                                                    "startColumnIndex": col, "endColumnIndex": col + 1},
                                          "fields": "userEnteredValue,textFormatRuns",
                                          "rows": [{"values": [{"userEnteredValue": {"stringValue": text}, "textFormatRuns": runs}]}]}})
+        if upload_errors:
+            note = "Không upload được: " + ", ".join(Path(x["file"]).name for x in upload_errors)
+            reqs.append(cell(row, "progress", f"{t:%d/%m} – {note} (người báo cần gửi lại file)"))
         sheets.spreadsheets().batchUpdate(spreadsheetId=SHEET_ID, body={"requests": reqs}).execute()
     except HttpError as e:
+        # Release the claimed row rather than leave a title with no report behind it.
+        try:
+            sheets.spreadsheets().batchUpdate(spreadsheetId=SHEET_ID, body={"requests": [cell(row, "title", "")]}).execute()
+        except Exception:
+            pass
         http_error(e)
     print(json.dumps({"ok": True, "id": bug_id, "row": row, "reporter": who["name"], "severity": severity,
                       "module": a.module, "platform": plat, "version": version,
                       "attachments": [{"file": l, "url": u} for l, u in links],
+                      "attachment_errors": upload_errors,
                       "sheet": f"{SHEET_URL}/edit#gid={TAB_GID}&range=A{row}"}, ensure_ascii=False, indent=1))
 
 
