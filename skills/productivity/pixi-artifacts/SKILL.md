@@ -1,7 +1,7 @@
 ---
 name: pixi-artifacts
 description: "Publish an HTML page to Pixi and share it with colleagues."
-version: 1.1.0
+version: 1.2.0
 author: kiennt (@kienntpixon)
 license: MIT
 platforms: [linux, macos, windows]
@@ -122,15 +122,25 @@ open it.
 | Read what is on it now | `read_artifact(id)` |
 | Share with a person | `grant_artifact_access(id, "user", <user uuid>)` |
 | Share with a department | `grant_artifact_access(id, "department", <dept uuid>)` |
+| Share with several departments | `grant_artifact_access(id, "department", subject_ids=[<uuid>, <uuid>, …])` |
 | Share with a job position | `grant_artifact_access(id, "position", <position uuid>)` |
 | Let them edit too | add `can_edit=true` |
 | Open to the whole company | `set_artifact_visibility(id, "org")` |
-| Stop sharing | `revoke_artifact_access(id, kind, subject_id)` |
+| Stop sharing | `revoke_artifact_access(id, kind, subject_id)` — or `subject_ids=[…]` |
+| Find a department's UUID | `list_artifact_targets(query="ke toan", kind="department")` |
 | Find pages | `list_artifacts()` |
 
 Subject UUIDs come from `list_artifact_targets`, which returns people,
 departments and positions as id + label. Never invent one — a wrong UUID
 silently shares with nobody, and the person who asked believes it arrived.
+Pass `query` rather than reading the whole directory: it ignores case and
+Vietnamese diacritics, and a department's label is its full path ("Khối Game ›
+Art"), so searching a parent's name also finds the departments under it.
+
+`subject_ids` takes up to 50 ids of one kind. Each is granted on its own: if
+some fail, the call returns an error whose body lists `shared` and `failed`.
+The ones under `shared` did go through — retry only the failed ones, and tell
+the person exactly which departments got the page.
 
 That tool is the only directory this skill gets, on purpose: turning "send it to
 Minh" into a UUID does not need the ability to read personnel records, so the
