@@ -1,0 +1,7 @@
+name: web-pixi
+version: 1.0.0
+description: "Pixi Gateway web search + extract. Uses the Pixi login (PIXI_LLM_KEY); the gateway holds the vendor keys."
+author: Pixi
+kind: backend
+provides_web_providers:
+  - pixi

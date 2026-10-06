@@ -112,7 +112,12 @@ def _get_backend() -> str:
     # Never-configured install. Explicit user credentials beat the managed-gateway probe (a Nous OAuth
     # token's tier may not grant web access; the gateway then fails at runtime with no fallback).
     # Free tiers trail paid.
+    #
+    # Pixi: the Pixi Gateway leads whenever the engine is signed in to Pixi, so searches are routed (and
+    # attributed) through the company gateway by default. Someone who wants their own vendor key stores
+    # an explicit ``web.backend`` / ``web.search_backend`` — that wins above, before this list is read.
     backend_candidates = (
+        ("pixi", _pixi_gateway_ready()),
         ("tavily", _has_env("TAVILY_API_KEY")), ("perplexity", _has_env("PERPLEXITY_API_KEY")),
         ("exa", _has_env("EXA_API_KEY")),
         ("parallel", _has_env("PARALLEL_API_KEY")), ("keenable", _has_env("KEENABLE_API_KEY")),
@@ -153,6 +158,15 @@ def _get_search_backend() -> str:
 def _get_extract_backend() -> str:
     """Backend for web_extract: ``web.extract_backend`` (strict, no probe) > ``web.backend`` > autodetect."""
     return _configured_backend("extract_backend") or _get_backend()
+
+
+def _pixi_gateway_ready() -> bool:
+    """Signed in to Pixi: a ``Pixi Gateway`` provider in config.yaml and ``PIXI_LLM_KEY`` in env."""
+    try:
+        from plugins.web.pixi.provider import gateway_ready
+        return gateway_ready()
+    except Exception:  # noqa: BLE001 — never fatal to backend selection
+        return False
 
 
 def _ddgs_package_importable() -> bool:

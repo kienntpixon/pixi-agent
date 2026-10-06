@@ -84,6 +84,7 @@ class TestBundledPluginsRegister:
             "keenable",
             "parallel",
             "perplexity",
+            "pixi",
             "searxng",
             "tavily",
             "xai",
