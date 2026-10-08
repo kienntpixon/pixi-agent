@@ -8,9 +8,10 @@ predicates live together here as pure functions (no I/O, SDK or credentials) tha
 cycle.
 """
 
+import os
 from urllib.parse import urlparse
 
-from utils import base_url_host_matches, base_url_hostname
+from utils import base_url_host_matches, base_url_hostname, base_url_origin
 
 _MINIMAX_ANTHROPIC_PREFIXES = ("https://api.minimax.io/anthropic", "https://api.minimaxi.com/anthropic")
 
@@ -118,6 +119,23 @@ def _is_nous_portal_endpoint(base_url: str | None) -> bool:
         return False
     override_host = base_url_hostname(override) if override else ""
     return bool(override_host) and base_url_hostname(base_url or "") == override_host
+
+
+def _is_pixi_gateway_endpoint(base_url: str | None) -> bool:
+    """Pixi's LLM gateway ``/v1/messages`` route: a verbatim passthrough to the native Claude API
+    (only ``model`` rewritten) over per-user sticky keys, so thinking signatures, prompt cache and
+    fast mode behave as native. Auth stays third-party (``x-api-key``, no OAuth). Trusted host only:
+    exact hostname (and port, when set) of the operator-set ``PIXI_LLM_ANTHROPIC_BASE_URL``; unset
+    -> False, and neither lookalike domains nor sibling hosts match."""
+    gateway = os.environ.get("PIXI_LLM_ANTHROPIC_BASE_URL", "").strip()
+    gateway_host = base_url_hostname(gateway) if gateway else ""
+    if not gateway_host or base_url_hostname(base_url or "") != gateway_host:
+        return False
+    try:
+        gateway_port = urlparse(gateway if "://" in gateway else f"//{gateway}").port
+    except ValueError:
+        return False
+    return gateway_port is None or base_url_origin(str(base_url))[2] == gateway_port
 
 
 def _requires_bearer_auth(base_url: str | None) -> bool:

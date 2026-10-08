@@ -17,7 +17,7 @@ from agent.anthropic_credentials import _is_oauth_token
 from agent.anthropic_endpoints import (
     _base_url_needs_context_1m_beta, _is_azure_anthropic_endpoint, _is_kimi_coding_endpoint,
     _is_minimax_anthropic_endpoint, _is_nous_portal_endpoint, _is_opencode_endpoint,
-    _is_third_party_anthropic_endpoint, _model_name_is_kimi_family, _normalize_base_url_text,
+    _is_pixi_gateway_endpoint, _is_third_party_anthropic_endpoint, _model_name_is_kimi_family, _normalize_base_url_text,
     _requires_bearer_auth,
 )
 from agent.anthropic_message_convert import (
@@ -574,10 +574,12 @@ def build_anthropic_kwargs(
     if _forbids_sampling_params(model):
         for key in ("temperature", "top_p", "top_k"):
             kwargs.pop(key, None)
-    # Fast mode: native Anthropic only — third-party providers reject the unknown beta/param and
-    # Anthropic scopes it to the Claude API (not Bedrock/Vertex/Foundry). Per-request extra_headers
-    # OVERRIDE the client-level anthropic-beta header, so rebuild the full beta list.
-    if fast_mode and not _is_third_party_anthropic_endpoint(base_url) and _supports_fast_mode(model):
+    # Fast mode: native Anthropic (or the Pixi gateway's verbatim passthrough) only — third-party
+    # providers reject the unknown beta/param and Anthropic scopes it to the Claude API (not
+    # Bedrock/Vertex/Foundry). Per-request extra_headers OVERRIDE the client-level anthropic-beta
+    # header, so rebuild the full beta list.
+    native_wire = not _is_third_party_anthropic_endpoint(base_url) or _is_pixi_gateway_endpoint(base_url)
+    if fast_mode and native_wire and _supports_fast_mode(model):
         kwargs.setdefault("extra_body", {})["speed"] = "fast"
         betas = _common_betas_for_base_url(base_url, drop_context_1m_beta=drop_context_1m_beta)
         kwargs["extra_headers"] = _beta_header(betas + (_OAUTH_ONLY_BETAS if is_oauth else []) + [_FAST_MODE_BETA])

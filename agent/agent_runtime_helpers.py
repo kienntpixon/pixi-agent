@@ -1301,10 +1301,14 @@ def _direct_native_anthropic_tool_cache_capability(
     agent, *, provider: Optional[str] = None, base_url: Optional[str] = None,
     api_mode: Optional[str] = None, model: Optional[str] = None,
 ) -> bool:
-    """Return whether this resolved destination accepts native tool markers."""
+    """Return whether this resolved destination accepts native tool markers (direct Anthropic or
+    the Pixi gateway's verbatim passthrough)."""
+    from agent.anthropic_endpoints import _is_pixi_gateway_endpoint
     eff_base_url = base_url if base_url is not None else (agent.base_url or "")
     eff_api_mode = api_mode if api_mode is not None else (agent.api_mode or "")
-    return eff_api_mode == "anthropic_messages" and base_url_hostname(eff_base_url) == "api.anthropic.com"
+    return eff_api_mode == "anthropic_messages" and (
+        base_url_hostname(eff_base_url) == "api.anthropic.com" or _is_pixi_gateway_endpoint(eff_base_url)
+    )
 
 
 # The cache_ttl tiers accepted by config; mirrored by agent_init's live-agent snapshot.
@@ -1500,7 +1504,7 @@ def anthropic_prompt_cache_policy(
     # 64K-token prompts and re-billing the full prompt on every turn. Observed within-turn progression with
     # cache enabled: 1% → 67% → 84% → 97% (#25970). Reuses the canonical family matcher (covers bare
     # k1./k2./k25 release slugs the substring check missed).
-    from agent.anthropic_endpoints import _model_name_is_kimi_family
+    from agent.anthropic_endpoints import _is_pixi_gateway_endpoint, _model_name_is_kimi_family
     is_kimi = _model_name_is_kimi_family(eff_model) or "moonshot" in model_lower
     is_openrouter = base_url_host_matches(eff_base_url, "openrouter.ai")
     # Nous Portal proxies to OpenRouter; treat as OpenRouter-equivalent for cache layout.
@@ -1508,6 +1512,7 @@ def anthropic_prompt_cache_policy(
     is_anthropic_wire = eff_api_mode == "anthropic_messages"
     is_native_anthropic = is_anthropic_wire and (
         eff_provider == "anthropic" or base_url_hostname(eff_base_url) == "api.anthropic.com"
+        or _is_pixi_gateway_endpoint(eff_base_url)
     )
     # Honor a configured route's per-model ``prompt_caching`` capability (explicit false too); only
     # for the two transports this planner handles, not Responses/Bedrock.
